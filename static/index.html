@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brain Stroke Detection System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .result-card {
+            transition: transform 0.2s;
+        }
+        .result-card:hover {
+            transform: translateY(-5px);
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Header -->
+    <header class="gradient-bg text-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-6 py-8">
+            <div class="flex items-center gap-4">
+                <div class="bg-white bg-opacity-20 p-3 rounded-xl backdrop-blur-sm">
+                    <svg class="w-10 h-10" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 9a1 1 0 112 0v4a1 1 0 11-2 0V9zm1-4a1 1 0 100 2 1 1 0 000-2z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-4xl font-bold">Brain Stroke Detection System</h1>
+                    <p class="text-blue-100 mt-2">AI-Powered CT Scan Analysis using Deep Learning</p>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-6 py-12">
+        <!-- Upload Section -->
+        <div id="uploadSection" class="mb-12">
+            <div class="bg-white rounded-2xl shadow-xl p-8 border-4 border-dashed border-gray-300 hover:border-blue-400 transition-all">
+                <div class="text-center">
+                    <svg class="w-20 h-20 mx-auto text-blue-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                    </svg>
+                    <h2 class="text-3xl font-bold text-gray-800 mb-3">Upload CT Scan Images</h2>
+                    <p class="text-gray-600 mb-6">Select one or multiple brain CT scan images for analysis</p>
+                    
+                    <label class="inline-block">
+                        <input type="file" id="fileInput" multiple accept="image/*" class="hidden" onchange="handleFileSelect(event)">
+                        <span class="cursor-pointer bg-gradient-to-r from-blue-500 to-purple-600 text-white px-10 py-4 rounded-xl font-bold text-lg hover:from-blue-600 hover:to-purple-700 transition-all shadow-lg inline-block">
+                            Select Files
+                        </span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Preview Section -->
+            <div id="previewSection" class="hidden mt-8">
+                <div class="bg-white rounded-2xl shadow-xl p-6">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-4">Selected Images (<span id="fileCount">0</span>)</h3>
+                    <div id="previewGrid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-6"></div>
+                    <button onclick="analyzeImages()" class="w-full gradient-bg text-white py-4 rounded-xl font-bold text-lg hover:opacity-90 transition-all shadow-lg">
+                        <span id="analyzeText">Analyze CT Scans</span>
+                        <span id="loadingSpinner" class="hidden">Analyzing... Please wait</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="resultsSection" class="hidden">
+            <!-- Summary Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="bg-white rounded-xl shadow-lg p-6 border-l-4 border-blue-500">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-600 text-sm font-semibold uppercase">Total Scans</p>
+                            <p id="totalScans" class="text-4xl font-bold text-gray-800 mt-2">0</p>
+                        </div>
+                        <svg class="w-14 h-14 text-blue-500 opacity-30" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/>
+                            <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/>
+                        </svg>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-lg p-6 border-l-4 border-green-500">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-600 text-sm font-semibold uppercase">Normal</p>
+                            <p id="normalScans" class="text-4xl font-bold text-green-600 mt-2">0</p>
+                        </div>
+                        <svg class="w-14 h-14 text-green-500 opacity-30" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                        </svg>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-lg p-6 border-l-4 border-red-500">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-600 text-sm font-semibold uppercase">Stroke Detected</p>
+                            <p id="strokeScans" class="text-4xl font-bold text-red-600 mt-2">0</p>
+                        </div>
+                        <svg class="w-14 h-14 text-red-500 opacity-30" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Results Grid -->
+            <div id="resultsGrid" class="grid grid-cols-1 lg:grid-cols-2 gap-6"></div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-white py-8 mt-16">
+        <div class="max-w-7xl mx-auto px-6 text-center">
+            <p class="text-sm">
+                ⚠️ <strong>Medical Disclaimer:</strong> This is an AI-assisted diagnostic tool for research purposes. 
+                Always consult with qualified medical professionals for final diagnosis and treatment decisions.
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        let selectedFiles = [];
+        const API_URL = 'http://localhost:5000/api';
+
+        function handleFileSelect(event) {
+            const files = Array.from(event.target.files);
+            selectedFiles = [];
+            
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    selectedFiles.push({
+                        file: file,
+                        preview: e.target.result,
+                        name: file.name
+                    });
+                    
+                    if (selectedFiles.length === files.length) {
+                        displayPreviews();
+                    }
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function displayPreviews() {
+            const previewSection = document.getElementById('previewSection');
+            const previewGrid = document.getElementById('previewGrid');
+            const fileCount = document.getElementById('fileCount');
+            
+            previewSection.classList.remove('hidden');
+            fileCount.textContent = selectedFiles.length;
+            previewGrid.innerHTML = '';
+            
+            selectedFiles.forEach((file, index) => {
+                const div = document.createElement('div');
+                div.className = 'relative group';
+                div.innerHTML = `
+                    <img src="${file.preview}" alt="${file.name}" 
+                         class="w-full h-32 object-cover rounded-lg border-2 border-gray-200 shadow-sm">
+                    <button onclick="removeFile(${index})" 
+                            class="absolute top-2 right-2 bg-red-500 text-white rounded-full w-7 h-7 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity font-bold shadow-lg hover:bg-red-600">
+                        ×
+                    </button>
+                    <p class="text-xs text-gray-600 mt-2 truncate px-1">${file.name}</p>
+                `;
+                previewGrid.appendChild(div);
+            });
+        }
+
+        function removeFile(index) {
+            selectedFiles.splice(index, 1);
+            if (selectedFiles.length === 0) {
+                document.getElementById('previewSection').classList.add('hidden');
+            } else {
+                displayPreviews();
+            }
+        }
+
+        async function analyzeImages() {
+            if (selectedFiles.length === 0) {
+                alert('Please select at least one image');
+                return;
+            }
+
+            // Show loading state
+            const analyzeBtn = document.querySelector('button[onclick="analyzeImages()"]');
+            const analyzeText = document.getElementById('analyzeText');
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            
+            analyzeBtn.disabled = true;
+            analyzeText.classList.add('hidden');
+            loadingSpinner.classList.remove('hidden');
+
+            // Prepare form data
+            const formData = new FormData();
+            selectedFiles.forEach(item => {
+                formData.append('files', item.file);
+            });
+
+            try {
+                const response = await fetch(`${API_URL}/predict`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error('Server error occurred');
+                }
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayResults(data.results);
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Failed to analyze images. Make sure the server is running on http://localhost:5000');
+            } finally {
+                analyzeBtn.disabled = false;
+                analyzeText.classList.remove('hidden');
+                loadingSpinner.classList.add('hidden');
+            }
+        }
+
+        function displayResults(results) {
+            const resultsSection = document.getElementById('resultsSection');
+            const resultsGrid = document.getElementById('resultsGrid');
+            
+            // Calculate summary
+            let strokeCount = 0;
+            let normalCount = 0;
+            
+            results.forEach(result => {
+                if (result.prediction === 1 || result.prediction_label === 'Stroke Detected') {
+                    strokeCount++;
+                } else {
+                    normalCount++;
+                }
+            });
+
+            // Update summary cards
+            document.getElementById('totalScans').textContent = results.length;
+            document.getElementById('normalScans').textContent = normalCount;
+            document.getElementById('strokeScans').textContent = strokeCount;
+
+            // Display individual results
+            resultsGrid.innerHTML = '';
+            
+            results.forEach(result => {
+                if (result.error) {
+                    // Handle error results
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'bg-red-50 border-2 border-red-300 rounded-xl p-6';
+                    errorDiv.innerHTML = `
+                        <p class="text-red-700 font-semibold">Error: ${result.error}</p>
+                        <p class="text-sm text-red-600 mt-2">${result.filename || ''}</p>
+                    `;
+                    resultsGrid.appendChild(errorDiv);
+                    return;
+                }
+
+                const isStroke = result.prediction === 1 || result.prediction_label === 'Stroke Detected';
+                const card = document.createElement('div');
+                card.className = 'bg-white rounded-xl shadow-lg overflow-hidden result-card';
+                
+                const imageSrc = result.image_data || selectedFiles.find(f => 
+                    f.name === result.image_path.split('/').pop() || 
+                    f.name === result.image_path.split('\\').pop()
+                )?.preview || '';
+
+                card.innerHTML = `
+                    <div class="flex flex-col md:flex-row">
+                        <div class="md:w-48 h-48 bg-gray-100">
+                            <img src="${imageSrc}" alt="CT Scan" 
+                                 class="w-full h-full object-cover">
+                        </div>
+                        <div class="flex-1 p-6">
+                            <h4 class="font-bold text-gray-800 mb-3 text-lg truncate">
+                                ${result.image_path ? result.image_path.split('/').pop() : 'CT Scan'}
+                            </h4>
+                            
+                            <div class="mb-4">
+                                <span class="inline-block px-4 py-2 rounded-lg font-bold text-sm ${
+                                    isStroke 
+                                        ? 'bg-red-100 text-red-700 border-2 border-red-300' 
+                                        : 'bg-green-100 text-green-700 border-2 border-green-300'
+                                }">
+                                    ${result.prediction_label || (isStroke ? 'Stroke Detected' : 'Normal')}
+                                </span>
+                            </div>
+                            
+                            <div class="space-y-2 text-sm">
+                                <div class="flex justify-between items-center p-2 bg-gray-50 rounded">
+                                    <span class="text-gray-600 font-semibold">Stroke Probability:</span>
+                                    <span class="font-bold text-lg ${isStroke ? 'text-red-600' : 'text-green-600'}">
+                                        ${(result.stroke_probability * 100).toFixed(1)}%
+                                    </span>
+                                </div>
+                                
+                                ${result.individual_predictions ? `
+                                <div class="pt-3 border-t mt-3">
+                                    <p class="text-gray-700 font-semibold mb-2">Model Predictions:</p>
+                                    <div class="space-y-2">
+                                        <div class="flex justify-between items-center">
+                                            <span class="text-gray-600">LightGBM:</span>
+                                            <div class="flex items-center gap-2">
+                                                <div class="w-24 bg-gray-200 rounded-full h-2">
+                                                    <div class="bg-blue-500 h-2 rounded-full" 
+                                                         style="width: ${result.individual_predictions.lightgbm * 100}%"></div>
+                                                </div>
+                                                <span class="font-semibold text-xs w-12 text-right">
+                                                    ${(result.individual_predictions.lightgbm * 100).toFixed(1)}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div class="flex justify-between items-center">
+                                            <span class="text-gray-600">CatBoost:</span>
+                                            <div class="flex items-center gap-2">
+                                                <div class="w-24 bg-gray-200 rounded-full h-2">
+                                                    <div class="bg-purple-500 h-2 rounded-full" 
+                                                         style="width: ${result.individual_predictions.catboost * 100}%"></div>
+                                                </div>
+                                                <span class="font-semibold text-xs w-12 text-right">
+                                                    ${(result.individual_predictions.catboost * 100).toFixed(1)}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div class="flex justify-between items-center">
+                                            <span class="text-gray-600">AdaBoost:</span>
+                                            <div class="flex items-center gap-2">
+                                                <div class="w-24 bg-gray-200 rounded-full h-2">
+                                                    <div class="bg-green-500 h-2 rounded-full" 
+                                                         style="width: ${result.individual_predictions.adaboost * 100}%"></div>
+                                                </div>
+                                                <span class="font-semibold text-xs w-12 text-right">
+                                                    ${(result.individual_predictions.adaboost * 100).toFixed(1)}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                ` : ''}
+                                
+                                ${result.timestamp ? `
+                                <div class="text-xs text-gray-500 mt-3 pt-3 border-t">
+                                    Analyzed: ${result.timestamp}
+                                </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                resultsGrid.appendChild(card);
+            });
+
+            // Show results section and scroll to it
+            resultsSection.classList.remove('hidden');
+            resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // Check server health on page load
+        window.addEventListener('load', async () => {
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                const data = await response.json();
+                console.log('Server status:', data);
+            } catch (error) {
+                console.warn('Server not reachable. Make sure Flask server is running on port 5000');
+            }
+        });
+    </script>
+</body>
+</html>
