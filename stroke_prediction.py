@@ -617,8 +617,7 @@ def main():
         unet_model_path="best_unet_model.h5",
         ensemble_models_path="my_stroke_ensemble"  # without file extensions
     )
- 
-    # Example 1: Predict on a single image
+
     print("\n" + "="*50)
     print("SINGLE IMAGE PREDICTION")
     print("="*50)
@@ -633,12 +632,10 @@ def main():
     else:
         print(f"Error: {result['error']}")
 
-    # Example 2: Predict on multiple images from a folder
     print("\n" + "="*50)
     print("BATCH PREDICTION")
     print("="*50)
     
-    # Get all images from a folder
     test_folder = "test/stroke"
     if os.path.exists(test_folder):
         image_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
