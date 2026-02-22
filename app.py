@@ -26,12 +26,33 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Initialize predictor (load models once at startup)
-print("Initializing prediction models...")
-predictor = StrokePredictionInterface(
-    unet_model_path="best_unet_model.h5",
-    ensemble_models_path="my_stroke_ensemble"
-)
-print("Models loaded successfully!")
+print("Initializing prediction models from Hugging Face...")
+print("="*60)
+
+# Get Hugging Face repo and token from environment variables
+HF_REPO_ID = os.getenv('HF_REPO_ID', 'mv2274/CNNBasedBrainStrokeDetection')
+HF_TOKEN = os.getenv('HF_TOKEN', '')  # Optional, for private repos
+
+try:
+    predictor = StrokePredictionInterface(
+        hf_repo_id=HF_REPO_ID,
+        hf_token=HF_TOKEN
+    )
+    print("✅ Models loaded successfully from Hugging Face!")
+except Exception as e:
+    print(f"❌ Error loading models: {e}")
+    print("Trying to load from local files as fallback...")
+    try:
+        predictor = StrokePredictionInterface(
+            unet_model_path="best_unet_model.h5",
+            ensemble_models_path="my_stroke_ensemble"
+        )
+        print("✅ Models loaded from local files!")
+    except Exception as e2:
+        print(f"❌ Failed to load models: {e2}")
+        predictor = None
+
+print("="*60)
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -53,8 +74,10 @@ def index():
 def health_check():
     """Health check endpoint"""
     return jsonify({
-        'status': 'healthy',
-        'models_loaded': predictor.models_loaded,
+        'status': 'healthy' if predictor and predictor.models_loaded else 'unhealthy',
+        'models_loaded': predictor.models_loaded if predictor else False,
+        'model_source': 'huggingface',
+        'hf_repo': HF_REPO_ID,
         'timestamp': datetime.now().isoformat()
     })
 
@@ -64,6 +87,12 @@ def predict():
     Main prediction endpoint
     Accepts multiple image files and returns predictions
     """
+    if not predictor or not predictor.models_loaded:
+        return jsonify({
+            'error': 'Models not loaded. Please check server logs.',
+            'success': False
+        }), 503
+    
     try:
         # Check if files were uploaded
         if 'files' not in request.files:
@@ -79,8 +108,9 @@ def predict():
         for file in files:
             if file and allowed_file(file.filename):
                 # Save file securely
+                original_name = file.filename
                 filename = secure_filename(file.filename)
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
                 unique_filename = f"{timestamp}_{filename}"
                 filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
                 file.save(filepath)
@@ -88,13 +118,17 @@ def predict():
                 # Run prediction
                 prediction_result = predictor.predict_single_image(filepath)
                 
+                prediction_result['original_filename'] = original_name
+                prediction_result['saved_filename'] = unique_filename
+                prediction_result['image_path'] = filepath
+                
                 # Add base64 encoded image for display
                 if "error" not in prediction_result:
                     image_base64 = encode_image_to_base64(filepath)
                     if image_base64:
                         prediction_result['image_data'] = f"data:image/jpeg;base64,{image_base64}"
                     
-                    # Clean up: optionally delete file after prediction
+                    # Optionally delete file after prediction to save space
                     # os.remove(filepath)
                 
                 results.append(prediction_result)
@@ -107,10 +141,14 @@ def predict():
         return jsonify({
             'success': True,
             'results': results,
-            'total_processed': len(results)
+            'total_processed': len(results),
+            'model_source': 'huggingface'
         })
     
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Error in prediction: {error_trace}")
         return jsonify({
             'error': f'Server error: {str(e)}',
             'success': False
@@ -122,6 +160,12 @@ def predict_batch():
     Batch prediction endpoint for multiple images
     More efficient for large batches
     """
+    if not predictor or not predictor.models_loaded:
+        return jsonify({
+            'error': 'Models not loaded',
+            'success': False
+        }), 503
+    
     try:
         files = request.files.getlist('files')
         
@@ -133,7 +177,7 @@ def predict_batch():
         for file in files:
             if file and allowed_file(file.filename):
                 filename = secure_filename(file.filename)
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
                 unique_filename = f"{timestamp}_{filename}"
                 filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
                 file.save(filepath)
@@ -152,7 +196,8 @@ def predict_batch():
         return jsonify({
             'success': True,
             'results': results,
-            'total_processed': len(results)
+            'total_processed': len(results),
+            'model_source': 'huggingface'
         })
     
     except Exception as e:
@@ -161,22 +206,39 @@ def predict_batch():
             'success': False
         }), 500
 
-@app.route('/api/stats', methods=['GET'])
-def get_statistics():
+@app.route('/api/model-info', methods=['GET'])
+def model_info():
     """
-    Get overall statistics (if you want to track predictions)
+    Get information about loaded models
     """
-    # You could implement database tracking here
+    if not predictor:
+        return jsonify({'error': 'Models not initialized'}), 503
+    
     return jsonify({
-        'message': 'Statistics endpoint - implement database tracking for production'
+        'models_loaded': predictor.models_loaded,
+        'model_source': 'huggingface',
+        'hf_repo': HF_REPO_ID,
+        'image_size': predictor.img_size,
+        'input_channels': predictor.input_channels,
+        'models': {
+            'unet': predictor.unet_model is not None,
+            'lightgbm': predictor.lightgbm_model is not None,
+            'catboost': predictor.catboost_model is not None,
+            'adaboost': predictor.adaboost_model is not None,
+            'decision_tree_meta': predictor.decision_tree_meta is not None
+        }
     })
 
 if __name__ == '__main__':
     print("\n" + "="*60)
-    print("Brain Stroke Detection Server Starting...")
+    print("🧠 Brain Stroke Detection Server Starting...")
     print("="*60)
-    print(f"Models loaded: {predictor.models_loaded}")
-    print("Server will be available at: http://localhost:5000")
+    if predictor:
+        print(f"✅ Models loaded: {predictor.models_loaded}")
+        print(f"📦 Model source: Hugging Face ({HF_REPO_ID})")
+    else:
+        print("❌ Models failed to load")
+    print("🌐 Server will be available at: http://localhost:5000")
     print("="*60 + "\n")
     
     # Run the Flask app

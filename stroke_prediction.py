@@ -17,23 +17,40 @@ import joblib
 import warnings
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
+from huggingface_hub import hf_hub_download
+import requests
 warnings.filterwarnings('ignore')
 
 class StrokePredictionInterface:
-    def __init__(self, unet_model_path, ensemble_models_path):
+    def __init__(self, 
+                 hf_repo_id=None, 
+                 unet_model_path=None, 
+                 ensemble_models_path=None,
+                 hf_token=None):
         """
-        Initialize the prediction interface with trained models
+        Initialize the prediction interface with models from Hugging Face or local
         
         Args:
-            unet_model_path: Path to the trained U-Net .h5 model
-            ensemble_models_path: Base path for ensemble models (without extensions)
+            hf_repo_id: Hugging Face repository ID (e.g., "username/stroke-detection")
+            unet_model_path: Local path to U-Net model (fallback if not using HF)
+            ensemble_models_path: Local path base for ensemble models (fallback)
+            hf_token: Hugging Face token (optional, for private repos)
         """
         print("Loading Brain Stroke Prediction Models...")
         print("="*50)
         
+        self.hf_repo_id = hf_repo_id
+        self.hf_token = hf_token
+        
         # Load U-Net model
-        print("Loading U-Net model...")
-        self.unet_model = keras.models.load_model(unet_model_path)
+        if hf_repo_id:
+            print(f"Loading U-Net model from Hugging Face: {hf_repo_id}")
+            self.unet_model = self._load_unet_from_hf()
+        elif unet_model_path:
+            print(f"Loading U-Net model from local path: {unet_model_path}")
+            self.unet_model = keras.models.load_model(unet_model_path)
+        else:
+            raise ValueError("Either hf_repo_id or unet_model_path must be provided")
         
         # Get input specifications from U-Net
         unet_input_shape = self.unet_model.input_shape
@@ -46,6 +63,78 @@ class StrokePredictionInterface:
         
         # Load ensemble models
         print("\nLoading ensemble models...")
+        if hf_repo_id:
+            self._load_ensemble_from_hf()
+        else:
+            self._load_ensemble_local(ensemble_models_path)
+        
+        # Check if all models are loaded
+        self.models_loaded = all([
+            self.lightgbm_model is not None,
+            self.catboost_model is not None,
+            self.adaboost_model is not None,
+            self.decision_tree_meta is not None
+        ])
+        
+        if self.models_loaded:
+            print("\n✓ All models loaded successfully!")
+        else:
+            print("\n⚠ Some models failed to load. Predictions may not work properly.")
+    
+    def _load_unet_from_hf(self):
+        """Load U-Net model from Hugging Face"""
+        try:
+            # Download model file from Hugging Face
+            model_path = hf_hub_download(
+                repo_id=self.hf_repo_id,
+                filename="best_unet_model.h5",
+                token=self.hf_token,
+                cache_dir="./model_cache"
+            )
+            print(f"✓ Downloaded U-Net model to: {model_path}")
+            
+            # Load the model
+            model = keras.models.load_model(model_path)
+            return model
+        except Exception as e:
+            print(f"✗ Error loading U-Net from Hugging Face: {e}")
+            raise
+    
+    def _load_ensemble_from_hf(self):
+        """Load ensemble models from Hugging Face"""
+        model_files = {
+            'lightgbm': 'my_stroke_ensemble_lightgbm.pkl',
+            'catboost': 'my_stroke_ensemble_catboost.pkl',
+            'adaboost': 'my_stroke_ensemble_adaboost.pkl',
+            'decision_tree_meta': 'my_stroke_ensemble_decision_tree_meta.pkl',
+            'scaler': 'my_stroke_ensemble_scaler.pkl'
+        }
+        
+        for model_name, filename in model_files.items():
+            try:
+                # Download model file
+                model_path = hf_hub_download(
+                    repo_id=self.hf_repo_id,
+                    filename=filename,
+                    token=self.hf_token,
+                    cache_dir="./model_cache"
+                )
+                
+                # Load the model
+                model = joblib.load(model_path)
+                setattr(self, f"{model_name}_model" if model_name != 'scaler' else model_name, model)
+                print(f"✓ {model_name.replace('_', ' ').title()} loaded")
+                
+            except Exception as e:
+                print(f"✗ Error loading {model_name}: {e}")
+                setattr(self, f"{model_name}_model" if model_name != 'scaler' else model_name, None)
+        
+        # Fallback scaler if not loaded
+        if not hasattr(self, 'scaler') or self.scaler is None:
+            self.scaler = StandardScaler()
+    
+    def _load_ensemble_local(self, ensemble_models_path):
+        """Load ensemble models from local files"""
         try:
             self.lightgbm_model = joblib.load(f"{ensemble_models_path}_lightgbm.pkl")
             print("✓ LightGBM model loaded")
@@ -80,19 +169,6 @@ class StrokePredictionInterface:
         except:
             print("✗ Error loading feature scaler")
             self.scaler = StandardScaler()
-        
-        # Check if all models are loaded
-        self.models_loaded = all([
-            self.lightgbm_model is not None,
-            self.catboost_model is not None,
-            self.adaboost_model is not None,
-            self.decision_tree_meta is not None
-        ])
-        
-        if self.models_loaded:
-            print("\n✓ All models loaded successfully!")
-        else:
-            print("\n⚠ Some models failed to load. Predictions may not work properly.")
     
     def preprocess_image(self, image_path):
         """
@@ -136,7 +212,7 @@ class StrokePredictionInterface:
             # Add batch dimension
             img_batch = np.expand_dims(img_array, axis=0)
             
-            # Find suitable layer for feature extraction (memory-efficient)
+            # Find suitable layer for feature extraction
             layer_info = []
             for i, layer in enumerate(self.unet_model.layers):
                 try:
@@ -150,16 +226,15 @@ class StrokePredictionInterface:
             
             # Use a suitable layer or fallback
             if layer_info:
-                feature_layer_name = layer_info[0][1]  # Use first suitable layer
+                feature_layer_name = layer_info[0][1]
             else:
-                # Fallback to middle layer
                 mid_idx = len(self.unet_model.layers) // 2
                 feature_layer_name = self.unet_model.layers[mid_idx].name
             
             # Create feature extractor with global average pooling
             base_output = self.unet_model.get_layer(feature_layer_name).output
             
-            if len(base_output.shape) == 4:  # (batch, H, W, C)
+            if len(base_output.shape) == 4:
                 pooled_output = tf.keras.layers.GlobalAveragePooling2D()(base_output)
             else:
                 pooled_output = base_output
@@ -176,7 +251,6 @@ class StrokePredictionInterface:
             
         except Exception as e:
             print(f"Error extracting U-Net features: {str(e)}")
-            # Fallback to simple statistics
             return self.create_simple_features(img_array)
     
     def create_simple_features(self, img_array):
@@ -238,101 +312,35 @@ class StrokePredictionInterface:
             unet_features = self.extract_unet_features(img_array)
             tabular_features = self.create_simple_features(img_array)
             
-            #print(f"U-Net features shape: {unet_features.shape}")
-            #print(f"Tabular features shape: {tabular_features.shape}")
-            
-            # Get expected feature counts from models
-            scaler_features = getattr(self.scaler, 'n_features_in_', None)
+            # Get expected feature counts
             lgb_features = getattr(self.lightgbm_model, 'n_features_in_', None) or getattr(self.lightgbm_model, 'n_features_', None)
             
-            #print(f"Scaler expects: {scaler_features} features")
-            #print(f"LightGBM expects: {lgb_features} features")
-            
-            # Strategy: Create features to match what the models actually expect
+            # Create features to match model expectations
             if lgb_features is not None:
                 target_features = lgb_features
-                #print(f"Target feature count: {target_features}")
-                
-                # Create combined features first
                 combined_raw = np.hstack([unet_features, tabular_features])
-                #print(f"Combined raw features shape: {combined_raw.shape}")
                 
                 if len(combined_raw) == target_features:
-                    #print("Perfect match with combined features")
                     model_features = combined_raw.reshape(1, -1)
                 elif len(combined_raw) > target_features:
-                    #print(f"Truncating from {len(combined_raw)} to {target_features}")
                     model_features = combined_raw[:target_features].reshape(1, -1)
                 else:
-                    #print(f"Padding from {len(combined_raw)} to {target_features}")
                     padded = np.zeros(target_features)
                     padded[:len(combined_raw)] = combined_raw
                     model_features = padded.reshape(1, -1)
                 
-                # Handle scaler mismatch
-                if scaler_features is not None and scaler_features != target_features:
-                    #print(f"Scaler/model mismatch: scaler expects {scaler_features}, models expect {target_features}")
-                    
-                    # Try to create features that work with scaler
-                    if scaler_features == len(tabular_features):
-                        #print("Scaler was trained on tabular features only")
-                        # Scale only the tabular part, leave U-Net features unscaled
-                        scaled_tabular = self.scaler.transform(tabular_features.reshape(1, -1))
-                        
-                        # Combine scaled tabular with raw U-Net features
-                        if len(unet_features) + len(scaled_tabular.flatten()) == target_features:
-                            model_features = np.hstack([unet_features, scaled_tabular.flatten()]).reshape(1, -1)
-                        else:
-                            # Adjust U-Net features to fit
-                            remaining_features = target_features - len(scaled_tabular.flatten())
-                            if len(unet_features) >= remaining_features:
-                                adjusted_unet = unet_features[:remaining_features]
-                            else:
-                                adjusted_unet = np.pad(unet_features, (0, remaining_features - len(unet_features)))
-                            model_features = np.hstack([adjusted_unet, scaled_tabular.flatten()]).reshape(1, -1)
-                        
-                        #print(f"Created mixed features shape: {model_features.shape}")
-                    else:
-                        # Create a new scaler or skip scaling
-                        #print("Warning: Creating features without proper scaling")
-                        model_features = model_features  # Use as-is without scaling
-                else:
-                    # Scale normally
-                    model_features = self.scaler.transform(model_features)
-                    
-            else:
-                #print("Cannot determine expected feature count, using combined features")
-                model_features = np.hstack([unet_features, tabular_features]).reshape(1, -1)
-                
-                # Try scaling, handle errors gracefully
+                # Scale features
                 try:
                     model_features = self.scaler.transform(model_features)
-                except ValueError as e:
-                    print(f"Scaling failed: {e}, using unscaled features")
-            
-            #print(f"Final model features shape: {model_features.shape}")
+                except:
+                    pass  # Use unscaled if scaling fails
+            else:
+                model_features = np.hstack([unet_features, tabular_features]).reshape(1, -1)
             
             # Get predictions from individual models
-            try:
-                lgb_pred = self.lightgbm_model.predict_proba(model_features)[0, 1]
-                print(f"LightGBM prediction: {lgb_pred}")
-            except Exception as e:
-                print(f"LightGBM error: {e}")
-                lgb_pred = 0.5  # Fallback
-            
-            try:
-                cat_pred = self.catboost_model.predict_proba(model_features)[0, 1]
-                print(f"CatBoost prediction: {cat_pred}")
-            except Exception as e:
-                print(f"CatBoost error: {e}")
-                cat_pred = 0.5  # Fallback
-                
-            try:
-                ada_pred = self.adaboost_model.predict_proba(model_features)[0, 1]
-                print(f"AdaBoost prediction: {ada_pred}")
-            except Exception as e:
-                print(f"AdaBoost error: {e}")
-                ada_pred = 0.5  # Fallback
+            lgb_pred = self.lightgbm_model.predict_proba(model_features)[0, 1]
+            cat_pred = self.catboost_model.predict_proba(model_features)[0, 1]
+            ada_pred = self.adaboost_model.predict_proba(model_features)[0, 1]
             
             # Meta-features for decision tree
             meta_features = np.array([[lgb_pred, cat_pred, ada_pred]])
@@ -346,14 +354,13 @@ class StrokePredictionInterface:
                 "image_path": image_path,
                 "prediction": int(final_prediction),
                 "prediction_label": "Stroke Detected" if final_prediction == 1 else "Normal",
-                "stroke_probability": float((lgb_pred+cat_pred+ada_pred)/3),
+                "stroke_probability": float((lgb_pred + cat_pred + ada_pred) / 3),
                 "individual_predictions": {
                     "lightgbm": float(lgb_pred),
                     "catboost": float(cat_pred), 
                     "adaboost": float(ada_pred)
                 },
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                
             }
             
             return result
@@ -394,268 +401,34 @@ class StrokePredictionInterface:
             print()
         
         return results
-    
-    def visualize_results(self, results, save_path=None):
-        """
-        Create a clean visualization with images, pie chart, and model comparison
-        
-        Args:
-            results: List of prediction results
-            save_path: Path to save the visualization
-        """
-        # Filter out error results and limit to 10 images
-        valid_results = [r for r in results if "error" not in r][:10]
-        
-        if not valid_results:
-            print("No valid results to visualize")
-            return
-        
-        # Create figure with proper layout
-        fig = plt.figure(figsize=(20, 12))
-        
-        # Define grid layout: 3 rows, 5 columns
-        # Row 1-2: Images (2 rows x 5 columns = 10 images)
-        # Row 3: Pie chart (left) and Model comparison (right)
-        
-        n_images = len(valid_results)
-        
-        # Display images in 2x5 grid
-        for i, result in enumerate(valid_results):
-            row = i // 5
-            col = i % 5
-            
-            # Calculate subplot position (1-10 for images)
-            subplot_num = row * 5 + col + 1
-            ax = plt.subplot(3, 5, subplot_num)
-            
-            try:
-                # Load and display image
-                img = plt.imread(result["image_path"])
-                ax.imshow(img, cmap='gray' if len(img.shape) == 2 else None)
-                
-                # Add prediction text with colored background
-                prediction_text = f"{result['prediction_label']}"
-                color = 'red' if result['prediction'] == 1 else 'green'
-                
-                ax.text(0.02, 0.98, prediction_text, transform=ax.transAxes, 
-                       verticalalignment='top', 
-                       bbox=dict(boxstyle='round,pad=0.3', facecolor=color, alpha=0.8),
-                       fontsize=10, color='white', weight='bold')
-                
-                # Clean title
-                filename = os.path.basename(result['image_path'])
-                if len(filename) > 15:
-                    filename = filename[:12] + "..."
-                ax.set_title(f"{filename}", fontsize=9, pad=5)
-                ax.axis('off')
-                
-            except Exception as e:
-                print(f"Error loading image {result['image_path']}: {e}")
-                ax.text(0.5, 0.5, 'Image\nLoad Error', ha='center', va='center', 
-                       transform=ax.transAxes, fontsize=10)
-                ax.axis('off')
-        
-        # Hide unused image slots if less than 10 images
-        for i in range(n_images, 10):
-            row = i // 5
-            col = i % 5
-            subplot_num = row * 5 + col + 1
-            ax = plt.subplot(3, 5, subplot_num)
-            ax.axis('off')
-        
-        # Summary statistics for charts
-        stroke_count = sum(1 for r in valid_results if r['prediction'] == 1)
-        normal_count = len(valid_results) - stroke_count
-        
-        # Pie chart (bottom left, spanning 2 columns)
-        pie_ax = plt.subplot(3, 5, (11, 12))  # Positions 11-12
-        labels = ['Normal', 'Stroke']
-        sizes = [normal_count, stroke_count]
-        colors = ['lightgreen', 'lightcoral']
-        explode = (0.05, 0.05)
-        
-        wedges, texts, autotexts = pie_ax.pie(sizes, explode=explode, labels=labels, colors=colors, 
-                                             autopct='%1.1f%%', shadow=True, startangle=90,
-                                             textprops={'fontsize': 12, 'weight': 'bold'})
-        
-        # Make percentage text more visible
-        for autotext in autotexts:
-            autotext.set_color('black')
-            autotext.set_fontsize(11)
-            autotext.set_weight('bold')
-        
-        pie_ax.set_title(f'Prediction Summary\n({len(valid_results)} images)', 
-                        fontsize=14, weight='bold', pad=20)
-        
-        # Model comparison chart (bottom right, spanning 3 columns)
-        model_ax = plt.subplot(3, 5, (13, 15))  # Positions 13-15
-        
-        # Calculate average predictions for each model
-        models = ['LightGBM', 'CatBoost', 'AdaBoost']
-        model_keys = ['lightgbm', 'catboost', 'adaboost']
-        avg_predictions = []
-        
-        for model_key in model_keys:
-            avg_pred = np.mean([r['individual_predictions'][model_key] for r in valid_results])
-            avg_predictions.append(avg_pred)
-        
-        # Create bar chart
-        bars = model_ax.bar(models, avg_predictions, 
-                           color=['skyblue', 'orange', 'lightgreen'],
-                           edgecolor='black', linewidth=1.5, alpha=0.8)
-        
-        # Customize model comparison chart
-        model_ax.set_ylabel('Average Stroke Probability', fontsize=12, weight='bold')
-        model_ax.set_title('Individual Model Performance', fontsize=14, weight='bold', pad=20)
-        model_ax.set_ylim(0, 1)
-        model_ax.grid(axis='y', alpha=0.3, linestyle='--')
-        
-        # Add value labels on bars
-        for bar, pred in zip(bars, avg_predictions):
-            height = bar.get_height()
-            model_ax.text(bar.get_x() + bar.get_width()/2., height + 0.02,
-                         f'{pred:.3f}', ha='center', va='bottom', 
-                         fontsize=11, weight='bold')
-        
-        # Style the model comparison
-        model_ax.tick_params(axis='x', labelsize=11)
-        model_ax.tick_params(axis='y', labelsize=10)
-        
-        # Add overall title
-        fig.suptitle('Brain Stroke Detection Results', fontsize=18, weight='bold', y=0.98)
-        
-        # Adjust layout for better spacing
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Leave space for suptitle
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-            print(f"Visualization saved to: {save_path}")
-        
-        plt.show()
-    
-    def generate_report(self, results, save_path=None):
-        """
-        Generate a detailed text report of the predictions
-        
-        Args:
-            results: List of prediction results
-            save_path: Path to save the report
-        """
-        valid_results = [r for r in results if "error" not in r]
-        error_results = [r for r in results if "error" in r]
-        
-        report = []
-        report.append("BRAIN STROKE PREDICTION REPORT")
-        report.append("=" * 50)
-        report.append(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        report.append(f"Total images processed: {len(results)}")
-        report.append(f"Successful predictions: {len(valid_results)}")
-        report.append(f"Failed predictions: {len(error_results)}")
-        report.append("")
-        
-        # Summary statistics
-        if valid_results:
-            stroke_count = sum(1 for r in valid_results if r['prediction'] == 1)
-            normal_count = len(valid_results) - stroke_count
-            
-            report.append("SUMMARY STATISTICS")
-            report.append("-" * 30)
-            report.append(f"Normal scans: {normal_count}")
-            report.append(f"Stroke detected: {stroke_count}")
-            report.append("")
-            
-            # Average model performances
-            avg_lgb = np.mean([r['individual_predictions']['lightgbm'] for r in valid_results])
-            avg_cat = np.mean([r['individual_predictions']['catboost'] for r in valid_results])
-            avg_ada = np.mean([r['individual_predictions']['adaboost'] for r in valid_results])
-            
-            report.append("AVERAGE MODEL PREDICTIONS")
-            report.append("-" * 30)
-            report.append(f"LightGBM average: {avg_lgb:.3f}")
-            report.append(f"CatBoost average: {avg_cat:.3f}")
-            report.append(f"AdaBoost average: {avg_ada:.3f}")
-            report.append("")
-        
-        # Detailed results
-        report.append("DETAILED RESULTS")
-        report.append("-" * 30)
-        
-        for i, result in enumerate(valid_results, 1):
-            report.append(f"\n{i}. {os.path.basename(result['image_path'])}")
-            report.append(f"   Prediction: {result['prediction_label']}")
-            report.append(f"   Individual Models:")
-            report.append(f"     - LightGBM: {result['individual_predictions']['lightgbm']:.3f}")
-            report.append(f"     - CatBoost: {result['individual_predictions']['catboost']:.3f}")
-            report.append(f"     - AdaBoost: {result['individual_predictions']['adaboost']:.3f}")
-        
-        # Error results
-        if error_results:
-            report.append(f"\n\nERRORS ENCOUNTERED")
-            report.append("-" * 30)
-            for i, result in enumerate(error_results, 1):
-                report.append(f"{i}. {result.get('image_path', 'Unknown')}: {result['error']}")
-        
-        report_text = "\n".join(report)
-        
-        if save_path:
-            with open(save_path, 'w') as f:
-                f.write(report_text)
-            print(f"Report saved to: {save_path}")
-        
-        print("\n" + report_text)
-        return report_text
-    
-   
 
-# Example usage and main function
+
+# Example usage
 def main():
     """
-    Main function demonstrating how to use the prediction interface
+    Main function demonstrating how to use the prediction interface with Hugging Face
     """
-    # Initialize the prediction interface
+    # Initialize with Hugging Face repo
     predictor = StrokePredictionInterface(
-        unet_model_path="best_unet_model.h5",
-        ensemble_models_path="my_stroke_ensemble"  # without file extensions
+        hf_repo_id="mv2274/CNNBasedBrainStrokeDetection",  # Replace with your HF repo
+        hf_token=os.getenv('HF_TOKEN', '')  # Add token if private repo
     )
-
+    
+    # Example: Predict on a single image
     print("\n" + "="*50)
     print("SINGLE IMAGE PREDICTION")
     print("="*50)
     
-    single_image_path = "OIP (1).webp"
-    result = predictor.predict_single_image(single_image_path)
-    
-    if "error" not in result:
-        print(f"Image: {os.path.basename(result['image_path'])}")
-        print(f"Prediction: {result['prediction_label']}")
-        print(f"Stroke Probability: {result['stroke_probability']:.3f}")
-    else:
-        print(f"Error: {result['error']}")
-
-    print("\n" + "="*50)
-    print("BATCH PREDICTION")
-    print("="*50)
-    
-    test_folder = "test/stroke"
-    if os.path.exists(test_folder):
-        image_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
-        image_paths = []
+    single_image_path = "test_image.jpg"
+    if os.path.exists(single_image_path):
+        result = predictor.predict_single_image(single_image_path)
         
-        for root, dirs, files in os.walk(test_folder):
-            for file in files:
-                if file.lower().endswith(image_extensions):
-                    image_paths.append(os.path.join(root, file))
-        
-        if image_paths:
-            # Predict on all images
-            results = predictor.predict_multiple_images(image_paths[:10])  # Limit to first 10 for demo
-            
-            # Generate visualizations and reports
-            predictor.visualize_results(results, save_path="PredictionResults.png")
-            predictor.generate_report(results, save_path="PredictionReport.txt")
+        if "error" not in result:
+            print(f"Image: {os.path.basename(result['image_path'])}")
+            print(f"Prediction: {result['prediction_label']}")
+            print(f"Stroke Probability: {result['stroke_probability']:.3f}")
         else:
-            print(f"No images found in {test_folder}")
-    else:
-        print(f"Test folder {test_folder} does not exist")
-    
-main()
+            print(f"Error: {result['error']}")
+
+if __name__ == "__main__":
+    main()
