@@ -1,12 +1,22 @@
-best_unet_model.h5
-uploads
+# Local model files (models live on Hugging Face, not in Git)
+*.h5
+*.pkl
+*.pt
+*.pth
+
+# Upload folder (runtime files)
+uploads/
+
+# Cache
+__pycache__/
+*.pyc
+model_cache/
+
+# Python env
+.env
+venv/
+.venv/
+
+# Tests
 test_app.py
 test_stroke_prediction.py
-__pycache__/
-model_cache/
-model_cache/models--mv2274--CNNBasedBrainStrokeDetection/refs/main
-model_cache/models--mv2274--CNNBasedBrainStrokeDetection/snapshots/3844cc7692d968b72748e90b9b24a67e5e1b79c6/my_stroke_ensemble_adaboost.pkl
-model_cache/models--mv2274--CNNBasedBrainStrokeDetection/snapshots/3844cc7692d968b72748e90b9b24a67e5e1b79c6/my_stroke_ensemble_catboost.pkl
-model_cache/models--mv2274--CNNBasedBrainStrokeDetection/snapshots/3844cc7692d968b72748e90b9b24a67e5e1b79c6/my_stroke_ensemble_decision_tree_meta.pkl
-model_cache/models--mv2274--CNNBasedBrainStrokeDetection/snapshots/3844cc7692d968b72748e90b9b24a67e5e1b79c6/my_stroke_ensemble_lightgbm.pkl
-model_cache/models--mv2274--CNNBasedBrainStrokeDetection/snapshots/3844cc7692d968b72748e90b9b24a67e5e1b79c6/my_stroke_ensemble_scaler.pkl
