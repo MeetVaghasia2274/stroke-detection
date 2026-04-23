@@ -5,6 +5,8 @@ numpy
 pandas
 opencv-python-headless
 matplotlib
+seaborn
+requests
 scikit-learn
 lightgbm
 catboost
